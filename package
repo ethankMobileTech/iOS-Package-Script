@@ -1,0 +1,317 @@
+#!/bin/bash
+
+#####################
+#	需要配置的参数		#
+#####################
+# 用户的家目录
+home="/Users/youmingtaizi/"
+# 工程名字
+projectName="MobileHotel"
+# app的中文名字，发邮件会用到
+chineseName="手机住"
+chineseNameTest="手机住测试版"
+# scheme
+scheme="MobileHotel"
+schemeTest="MobileHotelTest"
+# 要从多少个版本号之前获取版本号
+numOfVersionsForLog=500
+# 默认的源代码的URL，拉分支时使用
+defaultSvnURL="TODO"
+# 默认的branch的URL，拉分支时使用
+destBranchURL="TODO"
+# 本地的工程目录
+projectPath="TODO"
+# mail文件夹的路径
+mailPath="TODO"
+# 安装包和符号文件的路径
+packageDir="TODO"
+# fir token
+firToken="TODO"
+# log文件名
+logFilePath="log.txt"
+# 是否是测试包
+testPackage=NO
+# 打包模式
+DebugOrRelease=Debug
+# 是否建立branch
+branch=NO
+# 是否发邮件
+email=YES
+# 是否是本地打包
+localPackage=NO
+# 是否更新代码
+needUpdate=NO
+# 收集log信息时使用
+svnName0="zhoucb"
+svnName1="wanghui"
+svnName2="cuiyongguo"
+svnName3="liudongyangsvn"
+realName0="周春波："
+realName1="汪&nbsp;&nbsp;&nbsp;辉："
+realName2="崔永国："
+realName3="刘东洋："
+
+function handleError() {
+	# 发邮件
+	pushd $mailPath > /dev/null
+	python alertEmail.py "$targetScheme" "$1" "$version" "$svnVersionNumber" "$DebugOrRelease" "$targetChineseName"
+	popd > /dev/null
+}
+
+# NAME
+#	package
+# SYNOPSIS
+#	package [-tbrnml] [-p local path] [-u svn url] [-v svn version]
+# DESCRIPTION
+#	-t 	测试版
+#	-b 	只建立分支，不进行其他操作
+# 	-p 	指定从本地的某个路径开始打包
+#   -n  先update代码再进行其他操作
+# 	-u 	默认从本地的固定路径开始打包，如果指定此参数，后面需要加svnURL，则从svnURL co代码编译
+# 	-r 	默认是Debug模式，加此参数就是Release模式
+#	-m 	默认是发邮件，加此参数不发邮件
+#	-l 	默认是发布到fir，如果加上此参数，只进行本地打包，不发布
+#	-v 	默认是当前svn版本，此参数指定svn版本
+
+# 读取参数
+while getopts :tbrnmlp:u:v: OPTION
+do
+    case $OPTION in
+    	t)
+			testPackage=YES
+			;;
+        b)
+			branch=YES
+            ;;
+        r)
+			DebugOrRelease=Release
+            ;;
+        m)
+			email=NO
+            ;;
+        l)
+			localPackage=YES
+			email=NO
+            ;;
+        p)
+            projectPath=$OPTARG
+			hasSetPath=YES
+            if [[ ! "$projectPath" =~ /$ ]]; then
+            	projectPath=$projectPath"/"
+            fi
+            ;;
+		n)
+			needUpdate=YES
+            ;;
+        u)
+			svnURL=$OPTARG
+			if [[ $hasSetPath != "YES" ]]; then
+				projectPath="/tmp/"$projectName
+				if [[ -d $projectPath ]]; then
+					rm -rf $projectPath
+				fi
+			fi
+            ;;
+        v)
+            svnVersion=$OPTARG
+            ;;
+        \?)                       #如果出现错误，则解析为?
+            echo "*** 参数错误"
+            exit $?
+            ;;
+    esac
+done
+
+# 项目的scheme
+targetScheme=$scheme
+if [[ $testPackage = "YES" ]]; then
+	targetScheme=$schemeTest
+fi
+
+# app中文名字
+targetChineseName=$chineseName
+if [[ $testPackage = "YES" ]]; then
+	targetChineseName=$chineseNameTest
+fi
+
+# 如果svnURL长度大于0，则从svnURL co新代码，否则从本地的固定路径开始编译
+if [[ -n $svnURL ]]; then
+	# 下载代码
+	echo "下载代码..."
+	if [[ -n $svnVersion ]]; then
+		svn co -r$svnVersion $svnURL $projectPath  > /dev/null
+	else
+		svn co $svnURL $projectPath  > /dev/null
+	fi
+
+	if [[ ! $? -eq 0 ]]; then
+		handleError "check out 代码失败！"
+		echo "*** check out 代码失败！"
+		exit $?
+	fi
+else
+	if [[ -n $svnVersion ]]; then
+		svn up -r$svnVersion $projectPath  > /dev/null
+	elif [[ $needUpdate = "YES" ]]; then
+		svn up $projectPath  > /dev/null
+	fi
+
+	if [[ ! $? -eq 0 ]]; then
+		handleError "svn up 代码失败！"
+		echo "*** svn up 代码失败！"
+		exit $?
+	fi
+fi
+
+# 获取app版本号
+echo "获取app版本号信息..."
+version=`/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" $projectPath$targetScheme"/Info.plist"`
+
+# 获取svn版本号
+echo "获取svn版本号信息..."
+pushd $projectPath > /dev/null
+svnVersionNumber=`svn info | grep Revision: | awk '{print $2}'`
+popd > /dev/null
+
+# 只建立分支，不进行其他操作
+if [[ $branch = "YES" ]]; then
+	date=`date +%Y"."%m"."%d`
+	if [[ -n $svnVersion ]]; then
+		if [[ -z $svnURL ]]; then
+			svn cp -r$svnVersion $defaultSvnURL $destBranchURL$projectName"_"$version"_"$svnVersionNumber"_"$date -m "建立分支"
+		else
+			svn cp -r$svnVersion $svnURL $destBranchURL$projectName"_"$version"_"$svnVersionNumber"_"$date -m "建立分支"
+		fi
+	else
+		if [[ -z $svnURL ]]; then
+			svn cp $defaultSvnURL $destBranchURL$projectName"_"$version"_"$svnVersionNumber"_"$date -m "建立分支"
+		else
+			svn cp $svnURL $destBranchURL$projectName"_"$version"_"$svnVersionNumber"_"$date -m "建立分支"
+		fi
+	fi
+	if [[ ! $? -eq 0 ]]; then
+		handleError "建立分支失败！"
+		echo "*** 建立分支失败！"
+	fi
+	exit $?
+fi
+
+# 建立临时文件夹
+if [ ! -d $packageDir ]; then
+	echo "建立安装包文件夹..."
+	mkdir $packageDir
+fi
+
+# 如果是新check out的代码，需要先执行pod install
+if [[ -n $svnURL ]]; then
+	echo "执行 pod install..."
+	pushd $projectPath > /dev/null
+	pod install --no-repo-update --verbose > /dev/null
+	if [[ ! $? -eq 0 ]]; then
+		handleError "执行 pod install失败！"
+		echo "*** 执行 pod install失败！"
+		exit $?
+	fi
+	popd > /dev/null
+fi
+
+# 本地打包，将包放入临时文件夹
+echo "正在打包..."
+# 这一行语句是为了在$projectName.xcworkspace中生成$projectName的scheme，查看scheme的命令：xcodebuild -workspace /tmp/$projectName/$projectName.xcworkspace -list
+if [[ -n $svnURL ]]; then
+	open $projectPath$projectName".xcworkspace"
+	# sleep 10秒，确保scheme已生成
+	sleep 10
+fi
+fir b $projectPath$projectName".xcworkspace" -o $packageDir -w -C $DebugOrRelease -S $targetScheme > /dev/null
+if [[ ! $? -eq 0 ]]; then
+	handleError "打包失败！"
+	echo "*** 打包失败！"
+	exit $? 
+fi
+
+#重命名文件
+echo "重命名ipa和符号文件..."
+newAppName=$packageDir$targetScheme"_"$version"_"$svnVersionNumber"_"$DebugOrRelease".ipa"
+mv $packageDir$targetScheme"-"$version"-build-"$svnVersionNumber".ipa" $newAppName
+newDSYMName=$packageDir$targetScheme".app_"$version"_"$svnVersionNumber"_"$DebugOrRelease".dSYM"
+if [[ -d $newDSYMName ]]; then
+	rm -rf $newDSYMName
+fi
+mv $packageDir$targetScheme"-"$version"-build-"$svnVersionNumber".app.dSYM" $newDSYMName
+if [[ ! -f $newAppName ]]; then
+	handleError "文件"$newAppName"不存在"
+	echo "*** 文件"$newAppName"不存在"
+	exit 1
+fi
+
+# 如果不是本地打包的话，需要发布到fir
+if [[ $localPackage = "NO" ]]; then
+	# 发布，文件名要带上版本号和svn版本号
+	echo "发布安装包..."
+	fir p $newAppName -Q -T $firToken -c "`cat $mailPath$logFilePath`"
+	if [[ ! $? -eq 0 ]]; then
+		handleError "发布包失败"
+		echo "*** 发布包失败"
+		exit 1
+	fi
+fi
+
+# 如果需要发邮件的话，收集svn log并发邮件
+if [[ $email = "YES" ]]; then
+	echo "收集log信息..."
+	declare -i i=0
+	logInfo=""
+	svn log -r$svnVersionNumber:$((svnVersionNumber - numOfVersionsForLog)) $projectPath > tmpFile
+	while read line
+	do
+		case $i in
+		0)
+			line0=$line
+			;;
+		1)
+			line1=$line
+			;;
+		2)
+			line2=$line
+			;;
+		3)
+			line3=$line
+			if echo $line1 | grep $svnName0 > /dev/null; then
+				logInfo=${logInfo}"`echo $line1 | awk '{print $1}'` $realName0 $line#"
+			elif echo $line1 | grep $svnName1 > /dev/null; then
+				logInfo=${logInfo}"`echo $line1 | awk '{print $1}'` $realName1 $line#"
+			elif echo $line1 | grep $svnName2 > /dev/null; then
+				logInfo=${logInfo}"`echo $line1 | awk '{print $1}'` $realName2 $line#"
+			elif echo $line1 | grep $svnName3 > /dev/null; then
+				logInfo=${logInfo}"`echo $line1 | awk '{print $1}'` $realName3 $line#"
+			fi
+			;;
+		esac
+		i=$(((i+1)%4))
+	done < tmpFile
+	rm `pwd`"/tmpFile"
+
+	# 发邮件
+	pushd $mailPath > /dev/null
+	python updateEmail.py \
+	$targetScheme \
+	$packageDir"fir-"$targetScheme".png" \
+	"$logInfo" \
+	"$version" \
+	"$svnVersionNumber" \
+	"$DebugOrRelease" \
+	$targetChineseName \
+	> /dev/null
+
+	if [[ ! $? -eq 0 ]]; then
+		handleError "发邮件失败"
+		echo "*** 发邮件失败"
+		exit 1
+	fi
+	rm $packageDir"fir-"$targetScheme".png"
+	popd > /dev/null
+fi
+
+echo "操作成功!"
+
